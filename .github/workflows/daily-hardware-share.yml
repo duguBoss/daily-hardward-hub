@@ -3,8 +3,8 @@ name: Daily Hardware Share
 on:
   workflow_dispatch:
   schedule:
-    # 06:00 Asia/Shanghai = 22:00 UTC (previous day)
-    - cron: "0 22 * * *"
+    # 05:00 Asia/Shanghai = 21:00 UTC (previous day)
+    - cron: "0 21 * * *"
 
 permissions:
   contents: write
