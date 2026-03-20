@@ -22,6 +22,11 @@ OUTPUT_DIR = ROOT / "output"
 ASSETS_DIR = ROOT / "assets" / "today"
 POST_JSON = OUTPUT_DIR / "post.json"
 SEEN_FILE = DATA_DIR / "seen_urls.json"
+HEADER_IMG = (
+    "https://mmbiz.qpic.cn/mmbiz_gif/"
+    "xm1dT1jCe8lIO3P2oFVtd1x040PKGCRPN033gUTrHQQz0Licdqug5X1QgUPQBRCicoTqdYMrpgk7etibXLkK9rwcg/0"
+    "?wx_fmt=gif&from=appmsg"
+)
 
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3-flash-preview")
 GEMINI_MAX_RETRIES = int(os.getenv("GEMINI_MAX_RETRIES", "5"))
@@ -234,6 +239,30 @@ def extract_markdown_image_urls(md: str) -> list[str]:
     return re.findall(r"!\[[^\]]*\]\(([^)]+)\)", md or "")
 
 
+def extract_oshwhub_page_image_urls(page_html: str) -> list[str]:
+    # Keep only likely project-content images, skip avatars and UI assets.
+    raw = re.findall(
+        r"""https?://[^"'\s>]+?\.(?:jpg|jpeg|png|webp|gif)|//[^"'\s>]+?\.(?:jpg|jpeg|png|webp|gif)""",
+        page_html,
+        flags=re.I,
+    )
+    normalized: list[str] = []
+    for item in raw:
+        u = normalize_url(item, "oshwhub")
+        if not u:
+            continue
+        lu = u.lower()
+        if "avatar" in lu or "default" in lu:
+            continue
+        if (
+            "image.lceda.cn/oshwhub/" in lu
+            or "image.lceda.cn/pullimage/" in lu
+            or "image-pro.lceda.cn/pullimages/" in lu
+        ):
+            normalized.append(u)
+    return list(dict.fromkeys(normalized))
+
+
 def get_instructables_details(
     session: requests.Session, candidate: Candidate
 ) -> dict[str, Any]:
@@ -309,6 +338,14 @@ def get_oshwhub_details(session: requests.Session, candidate: Candidate) -> dict
         nu = normalize_url(u, "oshwhub")
         if nu:
             image_urls.append(nu)
+
+    try:
+        page_html = session.get(
+            source_url, headers={"User-Agent": USER_AGENT}, timeout=30
+        ).text
+        image_urls.extend(extract_oshwhub_page_image_urls(page_html))
+    except Exception as exc:
+        log(f"warn: failed to extract images from oshwhub page: {exc}")
 
     dedup_images = list(dict.fromkeys(image_urls))
     return {
@@ -389,15 +426,22 @@ Transform an open-source project into a WeChat-ready sharing article.
 
 Return JSON only, with exactly these fields:
 - title: Chinese title, 20-30 Chinese characters, high CTR style but truthful.
-- summary: Chinese summary, 80-140 Chinese characters.
+- summary: Chinese summary, 120-180 Chinese characters.
 - wxhtml: WeChat-compatible HTML fragment (body content only, no script, no markdown).
 
 Hard requirements:
-1) Include the original project URL as a clickable link in the article.
-2) Use the provided GitHub image URLs in <img> tags; mobile-friendly layout.
-3) Suggested structure: value hook -> 3-5 highlights -> reproducible steps -> audience fit -> source link.
-4) Do not output markdown, comments, or extra fields.
-5) Output language for title and summary must be Simplified Chinese.
+1) Keep the article rich and useful. Target around 1200+ Chinese characters in wxhtml.
+2) Use as many provided GitHub image URLs as possible in <img> tags; mobile-friendly layout.
+3) Suggested structure:
+   - opening hook
+   - project overview
+   - 5-8 practical highlights
+   - reproducible implementation steps
+   - key pitfalls and optimization tips
+   - suitable audience and scenarios
+4) Do not use hyperlink for source URL in the final source section; print plain URL text only.
+5) Do not output markdown, comments, or extra fields.
+6) Output language for title and summary must be Simplified Chinese.
 
 Source title: {source_title}
 Source URL: {source_url}
@@ -470,13 +514,31 @@ def ensure_wxhtml(
     if not body:
         body = (
             f"<section><h2>{escape(source_title)}</h2>"
-            f"<p>This article is adapted from an open-source hardware project.</p></section>"
+            "<p>这是一篇基于开源硬件项目整理的深度分享，适合直接用于微信图文发布。</p>"
+            "</section>"
         )
+    # Ensure source URL is non-clickable text only.
+    safe_source = escape(source_url)
+    body = re.sub(
+        rf"<a[^>]*href=[\"']{re.escape(source_url)}[\"'][^>]*>.*?</a>",
+        safe_source,
+        body,
+        flags=re.I | re.S,
+    )
+    body = body.replace(f"href='{source_url}'", "").replace(f'href="{source_url}"', "")
 
-    if source_url not in body:
+    text_len = len(BeautifulSoup(body, "html.parser").get_text(" ", strip=True))
+    if text_len < 900:
         body += (
-            f"<p style='margin-top:16px;color:#666;font-size:14px;'>"
-            f"Source project URL: <a href='{escape(source_url)}'>{escape(source_url)}</a></p>"
+            "<section style='padding:12px 0;'>"
+            "<h3 style='font-size:20px;margin:0 0 10px;'>为什么这个项目值得你做一遍</h3>"
+            "<p>这个项目不仅是一个可复现的硬件案例，更是一套完整的工程思路训练。"
+            "你可以从中学到需求拆解、器件选择、结构布局、调试方法和落地优化。"
+            "如果你正在做个人作品集、课程作业、创客比赛或副业产品验证，这类项目能显著提高你的完成度和展示效果。</p>"
+            "<p>相比只看成品演示，这里更强调“可操作性”：每一步都可以拆成具体动作，"
+            "并且能直接迁移到你自己的项目里。读完并实践后，你不仅能复刻一个作品，"
+            "还会形成一套可重复使用的硬件开发模板。</p>"
+            "</section>"
         )
 
     missing_images = [u for u in github_images if u not in body]
@@ -487,8 +549,21 @@ def ensure_wxhtml(
             "</figure>"
         )
 
+    body += (
+        "<section style='margin-top:18px;padding:14px;background:#f7f7f7;border-radius:10px;'>"
+        "<h3 style='margin:0 0 8px;font-size:18px;'>原文项目地址</h3>"
+        f"<p style='margin:0;color:#333;word-break:break-all;'>{safe_source}</p>"
+        "<p style='margin:8px 0 0;color:#666;font-size:14px;'>"
+        "微信内请长按复制以上地址，在浏览器打开访问。</p>"
+        "</section>"
+    )
+
     return (
         "<section style='font-size:16px;line-height:1.75;color:#222;'>"
+        "<section style='margin:0 0 16px;'>"
+        f"<img src='{HEADER_IMG}' "
+        "style='width:100%;height:auto;display:block;border-radius:12px;'/>"
+        "</section>"
         f"{body}"
         "</section>"
     )
@@ -522,7 +597,7 @@ def main() -> int:
 
     image_urls = detail.get("image_urls", [])
     log(f"source images found: {len(image_urls)}")
-    github_images = download_images(session, image_urls, limit=12)
+    github_images = download_images(session, image_urls, limit=20)
     if not github_images:
         raise RuntimeError("No image downloaded from selected project.")
     log(f"images downloaded: {len(github_images)}")
@@ -544,14 +619,14 @@ def main() -> int:
         title = f"{detail['title']} - Open Source Hardware Breakdown"
     if not summary:
         summary = (
-            f"Adapted from a {detail['source']} open-source project with highlights, "
-            "reproducible steps, and the original source link."
+            f"基于 {detail['source']} 的开源项目整理，包含核心亮点、实操步骤、避坑建议与原文地址。"
         )
     wxhtml = ensure_wxhtml(wxhtml_raw, detail["source_url"], title, github_images)
 
+    covers = list(dict.fromkeys(github_images + [detail["source_url"]]))
     post_data = {
         "title": title,
-        "covers": github_images,
+        "covers": covers,
         "wxhtml": wxhtml,
         "summary": summary,
     }
