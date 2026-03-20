@@ -1,0 +1,47 @@
+name: Daily Hardware Share
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 06:00 Asia/Shanghai = 22:00 UTC (previous day)
+    - cron: "0 22 * * *"
+
+permissions:
+  contents: write
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Generate daily share
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL: gemini-2.0-flash
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+          TZ: Asia/Shanghai
+        run: python scripts/daily_hardware_hub.py
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          if [[ -n "$(git status --porcelain)" ]]; then
+            git add output/post.json assets/today data/seen_urls.json
+            git commit -m "chore: update daily hardware share $(date +'%Y-%m-%d')"
+            git push
+          else
+            echo "No changes to commit."
+          fi
