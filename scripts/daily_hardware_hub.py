@@ -5,6 +5,7 @@ import os
 import random
 import re
 import shutil
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from html import escape
@@ -22,7 +23,8 @@ ASSETS_DIR = ROOT / "assets" / "today"
 POST_JSON = OUTPUT_DIR / "post.json"
 SEEN_FILE = DATA_DIR / "seen_urls.json"
 
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3-flash-preview")
+GEMINI_MAX_RETRIES = int(os.getenv("GEMINI_MAX_RETRIES", "5"))
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
@@ -410,14 +412,35 @@ Extracted source text: {content_text[:15000]}
             "responseMimeType": "application/json",
         },
     }
-    resp = session.post(
-        endpoint,
-        headers={"Content-Type": "application/json"},
-        json=payload,
-        timeout=120,
-    )
-    resp.raise_for_status()
-    data = resp.json()
+    data: dict[str, Any] | None = None
+    for attempt in range(1, GEMINI_MAX_RETRIES + 1):
+        resp = session.post(
+            endpoint,
+            headers={"Content-Type": "application/json"},
+            json=payload,
+            timeout=120,
+        )
+        if resp.status_code < 400:
+            data = resp.json()
+            break
+
+        should_retry = resp.status_code == 429 or 500 <= resp.status_code <= 599
+        if not should_retry or attempt == GEMINI_MAX_RETRIES:
+            resp.raise_for_status()
+
+        retry_after = resp.headers.get("Retry-After", "").strip()
+        if retry_after.isdigit():
+            delay = min(60, int(retry_after))
+        else:
+            delay = min(60, 2 ** attempt)
+        log(
+            f"warn: Gemini request failed status={resp.status_code}, "
+            f"retrying in {delay}s (attempt {attempt}/{GEMINI_MAX_RETRIES})"
+        )
+        time.sleep(delay)
+
+    if data is None:
+        raise RuntimeError("Gemini request failed after retries.")
 
     parts = data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
     text = ""

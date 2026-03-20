@@ -27,7 +27,8 @@ jobs:
       - name: Generate daily share
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          GEMINI_MODEL: gemini-2.0-flash
+          GEMINI_MODEL: gemini-3-flash-preview
+          GEMINI_MAX_RETRIES: "5"
           GITHUB_REPOSITORY: ${{ github.repository }}
           GITHUB_REF_NAME: ${{ github.ref_name }}
           TZ: Asia/Shanghai
