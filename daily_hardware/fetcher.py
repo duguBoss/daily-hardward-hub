@@ -5,6 +5,7 @@ from typing import Any
 
 import requests
 from .models import Candidate
+from .filters import build_instructables_candidate_text, is_hardware_project
 from .utils import log, normalize_url, html_to_text, markdown_to_text, extract_markdown_image_urls
 from .config import USER_AGENT, TIMEOUT
 
@@ -66,6 +67,8 @@ def fetch_instructables_candidates(session: requests.Session) -> list[Candidate]
             title = (doc.get("title") or "").strip()
             if not slug or not title:
                 continue
+            if not is_hardware_project(title, build_instructables_candidate_text(doc)):
+                continue
             url = f"https://www.instructables.com/{slug}/"
             if url not in seen_urls:
                 seen_urls.add(url)
@@ -96,6 +99,11 @@ def fetch_oshwhub_candidates(session: requests.Session) -> list[Candidate]:
         path = item.get("path")
         title = (item.get("name") or "").strip()
         if not uuid or not path or not title:
+            continue
+        summary_text = "\n".join(
+            str(item.get(key) or "") for key in ("name", "title", "description", "introduction", "summary")
+        )
+        if not is_hardware_project(title, summary_text):
             continue
         url = normalize_url(f"/{str(path).lstrip('/')}", "oshwhub")
         if url and url not in seen_urls:

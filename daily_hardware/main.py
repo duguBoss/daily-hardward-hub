@@ -11,6 +11,7 @@ from typing import Any
 import requests
 
 from .config import DATA_DIR, OUTPUT_DIR, ASSETS_DIR, POST_JSON, GEMINI_MODEL
+from .filters import is_hardware_project
 from .utils import log, load_seen_urls, save_seen_urls
 from .models import Candidate
 from .fetcher import fetch_instructables_candidates, fetch_oshwhub_candidates, get_project_details
@@ -27,7 +28,7 @@ def clean_generated_outputs() -> None:
 
 def choose_candidate(candidates: list[Candidate], seen_urls: set[str]) -> Candidate:
     """Smart selection: alternate sources by date and ensure freshness."""
-    unseen = [c for c in candidates if c.url not in seen_urls]
+    unseen = [c for c in candidates if c.url not in seen_urls and is_hardware_project(c.title)]
     if not unseen:
         raise RuntimeError("No fresh hardware project found in candidate pool.")
 
@@ -78,6 +79,8 @@ def main() -> int:
     # Extraction phase
     details = get_project_details(session, selected)
     log(f"fetched detailed content: {len(details['text'])} chars.")
+    if not is_hardware_project(details.get("title", ""), details.get("text", "")):
+        raise RuntimeError(f"Selected project is not a hardware/tech build: {selected.title}")
     
     # Asset phase
     github_image_urls = download_images(session, details["images"], limit=15)
