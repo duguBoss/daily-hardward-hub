@@ -12,6 +12,8 @@ POSITIVE_KEYWORDS = (
     "bluetooth", "wifi", "lora", "drone", "fpga", "stm32", "mcu", "keyboard", "display",
     "solder", "焊接", "电路", "电子", "硬件", "开源硬件", "单片机", "传感器", "物联网", "智能家居", "继电器",
     "机器人", "机械臂", "3d打印", "3d 打印", "打印机", "激光切割", "数控", "固件", "嵌入式", "自动化",
+    "actuator", "servo", "servo motor", "dc motor", "motor", "stepper", "stepper motor",
+    "驱动器", "电机", "舵机", "步进电机", "执行器",
 )
 
 NEGATIVE_KEYWORDS = (

@@ -9,6 +9,84 @@ import requests
 from .config import GEMINI_MODEL, GEMINI_MAX_RETRIES
 from .utils import log
 
+
+def is_hardware_project_ai(
+    session: requests.Session,
+    api_key: str,
+    title: str,
+    text: str,
+) -> bool:
+    """Use AI to determine if the project is a hardware/tech build."""
+    endpoint = (
+        f"https://generativelanguage.googleapis.com/v1beta/models/"
+        f"{GEMINI_MODEL}:generateContent?key={api_key}"
+    )
+
+    prompt = f"""You are a hardware project classifier. Analyze the following project and determine if it is a hardware/electronics/tech build project.
+
+Hardware projects typically include:
+- Electronics, circuits, PCBs, microcontrollers (Arduino, ESP32, Raspberry Pi, etc.)
+- 3D printing, CNC, laser cutting
+- Robotics, drones, mechanical devices
+- IoT devices, sensors, automation
+- Physical computing, embedded systems
+
+Non-hardware projects include:
+- Cooking recipes, food
+- Crafts like knitting, sewing, jewelry making
+- Pure software projects without hardware
+- Art projects without electronics/tech components
+
+Project Title: {title}
+Project Content (first 3000 chars):
+{text[:3000]}
+
+Respond with JSON only:
+{{"is_hardware": true/false, "reason": "brief explanation in Chinese"}}
+""".strip()
+
+    payload = {
+        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+        "generationConfig": {
+            "temperature": 0.1,
+            "responseMimeType": "application/json",
+        },
+    }
+
+    try:
+        resp = session.post(
+            endpoint,
+            headers={"Content-Type": "application/json"},
+            json=payload,
+            timeout=30
+        )
+        resp.raise_for_status()
+        data = resp.json()
+
+        parts = data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
+        text_response = "".join(p.get("text", "") for p in parts).strip()
+
+        if not text_response:
+            return False
+
+        try:
+            result = json.loads(text_response)
+        except json.JSONDecodeError:
+            match = re.search(r"\{.*\}", text_response, flags=re.S)
+            if match:
+                result = json.loads(match.group(0))
+            else:
+                return False
+
+        is_hardware = result.get("is_hardware", False)
+        reason = result.get("reason", "")
+        log(f"AI classification: is_hardware={is_hardware}, reason={reason}")
+        return is_hardware
+
+    except Exception as e:
+        log(f"warn: AI classification failed: {e}, falling back to keyword filtering")
+        return False
+
 def call_gemini(
     session: requests.Session,
     api_key: str,

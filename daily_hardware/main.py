@@ -11,12 +11,11 @@ from typing import Any
 import requests
 
 from .config import DATA_DIR, OUTPUT_DIR, ASSETS_DIR, POST_JSON, GEMINI_MODEL
-from .filters import is_hardware_project
 from .utils import log, load_seen_urls, save_seen_urls
 from .models import Candidate
 from .fetcher import fetch_instructables_candidates, fetch_oshwhub_candidates, get_project_details
 from .images import download_images
-from .ai import call_gemini
+from .ai import call_gemini, is_hardware_project_ai
 from .renderer import ensure_wxhtml
 
 def clean_generated_outputs() -> None:
@@ -28,20 +27,70 @@ def clean_generated_outputs() -> None:
 
 def choose_candidate(candidates: list[Candidate], seen_urls: set[str]) -> Candidate:
     """Smart selection: alternate sources by date and ensure freshness."""
-    unseen = [c for c in candidates if c.url not in seen_urls and is_hardware_project(c.title)]
+    unseen = [c for c in candidates if c.url not in seen_urls]
     if not unseen:
         raise RuntimeError("No fresh hardware project found in candidate pool.")
 
     # Source alternation logic by ordinal day number
     day_no = datetime.now(timezone.utc).toordinal()
     preferred = "instructables" if day_no % 2 == 0 else "oshwhub"
-    
+
     pool = [c for c in unseen if c.source == preferred] or unseen
-    
+
     # Stable random choice per day
     seed = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     rng = random.Random(seed)
     return rng.choice(pool)
+
+
+def find_valid_project(
+    session: requests.Session,
+    candidates: list[Candidate],
+    seen_urls: set[str],
+    api_key: str,
+) -> tuple[Candidate, dict]:
+    """Find a valid hardware project by checking candidates one by one."""
+    # Sort candidates by preference (alternating sources by day)
+    day_no = datetime.now(timezone.utc).toordinal()
+    preferred = "instructables" if day_no % 2 == 0 else "oshwhub"
+
+    unseen = [c for c in candidates if c.url not in seen_urls]
+    if not unseen:
+        raise RuntimeError("No fresh projects found in candidate pool.")
+
+    # Sort: preferred source first, then shuffle within each group
+    seed = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    rng = random.Random(seed)
+
+    preferred_candidates = [c for c in unseen if c.source == preferred]
+    other_candidates = [c for c in unseen if c.source != preferred]
+
+    rng.shuffle(preferred_candidates)
+    rng.shuffle(other_candidates)
+
+    sorted_candidates = preferred_candidates + other_candidates
+
+    for candidate in sorted_candidates:
+        try:
+            log(f"checking project: {candidate.source} - {candidate.title}")
+            details = get_project_details(session, candidate)
+            log(f"fetched detailed content: {len(details['text'])} chars.")
+
+            # Use AI to classify the project
+            if is_hardware_project_ai(session, api_key, details.get("title", ""), details.get("text", "")):
+                log(f"AI confirmed this is a hardware project: {candidate.title}")
+                return candidate, details
+            else:
+                log(f"AI rejected project (not hardware), skipping: {candidate.title}")
+                seen_urls.add(candidate.url)  # Mark as seen to avoid re-checking
+                continue
+
+        except Exception as e:
+            log(f"warn: failed to check project {candidate.url}: {e}")
+            seen_urls.add(candidate.url)
+            continue
+
+    raise RuntimeError("No valid hardware project found after checking all candidates.")
 
 def main() -> int:
     """Orchestrate the content generation workflow."""
@@ -52,12 +101,12 @@ def main() -> int:
 
     log(f"starting daily-hardware-hub workflow (model: {GEMINI_MODEL})")
     clean_generated_outputs()
-    
+
     seen_urls = load_seen_urls()
     log(f"loaded {len(seen_urls)} seen URLs.")
 
     session = requests.Session()
-    
+
     # Discovery phase
     candidates = []
     try:
@@ -65,22 +114,15 @@ def main() -> int:
         candidates.extend(fetch_oshwhub_candidates(session))
     except Exception as e:
         log(f"warn: candidate discovery failed partly: {e}")
-    
+
     if not candidates:
         log("error: no project candidates discovered from any source.")
         return 1
-    
+
     log(f"discovered {len(candidates)} total candidates.")
-    
-    # Selection phase
-    selected = choose_candidate(candidates, seen_urls)
-    log(f"selected project: {selected.source} - {selected.title} - {selected.url}")
-    
-    # Extraction phase
-    details = get_project_details(session, selected)
-    log(f"fetched detailed content: {len(details['text'])} chars.")
-    if not is_hardware_project(details.get("title", ""), details.get("text", "")):
-        raise RuntimeError(f"Selected project is not a hardware/tech build: {selected.title}")
+
+    # Selection & Validation phase - use AI to find valid hardware project
+    selected, details = find_valid_project(session, candidates, seen_urls, gemini_key)
     
     # Asset phase
     github_image_urls = download_images(session, details["images"], limit=15)
