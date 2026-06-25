@@ -1,0 +1,232 @@
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+
+LiquidCrystal_I2C lcd(0x27, 16, 2); 
+
+// basic pins for my layout
+int startBtn = 2;
+int reel1Btn = 3;
+int reel2Btn = 4;
+int reel3Btn = 5;
+
+int greenLED = 8;
+int yellowLED = 9;
+int redLED = 10;
+int buzzer = 11;
+
+// all my big 2-row custom shapes in binary grids
+byte skullTop[] = { B01110, B11111, B10101, B10101, B11111, B11111, B01110, B01110 };
+byte skullBot[] = { B01110, B01110, B00000, B00000, B00000, B00000, B00000, B00000 };
+
+byte cherryTop[] = { B00111, B01100, B11000, B10011, B10111, B00111, B00011, B00011 };
+byte cherryBot[] = { B01110, B11111, B11111, B01110, B00000, B00000, B00000, B00000 };
+
+byte triple7Top[] = { B11111, B11111, B00011, B00110, B01100, B01100, B11000, B11000 };
+byte triple7Bot[] = { B11000, B01100, B01100, B00110, B00011, B00011, B00000, B00000 };
+
+byte bellTop[] = { B00100, B01110, B01110, B01110, B11111, B11111, B11111, B11111 };
+byte bellBot[] = { B11111, B11111, B00100, B01110, B01110, B00000, B00000, B00000 };
+
+byte starTop[] = { B00100, B00100, B01110, B01110, B01110, B11111, B11111, B11111 };
+byte starBot[] = { B11111, B01110, B01110, B11111, B10001, B10001, B10001, B00000 };
+
+byte diamondTop[] = { B01110, B10101, B11111, B10001, B11111, B11111, B11111, B11111 };
+byte diamondBot[] = { B11111, B10101, B01110, B01110, B00100, B00100, B00000, B00000 };
+
+// the moving bar frames for spinning effect
+byte blurTop[] = { B11111, B00000, B11111, B00000, B11111, B00000, B11111, B00000 };
+byte blurBot[] = { B00000, B11111, B00000, B11111, B00000, B11111, B00000, B11111 };
+
+// variables for keeping track of the values
+int reel1 = 0;
+int reel2 = 0;
+int reel3 = 0;
+
+bool spin1 = false;
+bool spin2 = false;
+bool spin3 = false;
+bool toggleFrame = false;
+
+void setup() {
+  pinMode(startBtn, INPUT_PULLUP);
+  pinMode(reel1Btn, INPUT_PULLUP);
+  pinMode(reel2Btn, INPUT_PULLUP);
+  pinMode(reel3Btn, INPUT_PULLUP);
+  
+  pinMode(greenLED, OUTPUT);
+  pinMode(yellowLED, OUTPUT);
+  pinMode(redLED, OUTPUT);
+  pinMode(buzzer, OUTPUT);
+  
+  // get a random start sequence from open pin noise
+  randomSeed(analogRead(A0));
+  
+  lcd.init();
+  lcd.backlight();
+  
+  showSplash();
+}
+
+void loop() {
+  // wait for start button press
+  if (digitalRead(startBtn) == LOW) {
+    startGame();
+  }
+}
+
+void showSplash() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("  SLOT MACHINE  ");
+  lcd.setCursor(0, 1);
+  lcd.print("  Press START   ");
+}
+
+void startGame() {
+  lcd.clear(); 
+  
+  digitalWrite(greenLED, LOW);
+  digitalWrite(yellowLED, LOW);
+  digitalWrite(redLED, LOW);
+  
+  // load the moving animation frames into slot 6 and 7 right away
+  lcd.createChar(6, blurTop);
+  lcd.createChar(7, blurBot);
+
+  spin1 = true;
+  spin2 = true;
+  spin3 = true;
+  
+  while (spin1 || spin2 || spin3) {
+    toggleFrame = !toggleFrame;
+    
+    // random number from 0 to 5 for the 6 choices
+    if (spin1 == true) reel1 = random(0, 6);
+    if (spin2 == true) reel2 = random(0, 6);
+    if (spin3 == true) reel3 = random(0, 6);
+    
+    // show the line animations on the reels while spinning
+    if (spin1 == true) {
+      lcd.setCursor(1, 0);
+      if (toggleFrame == true) { lcd.write(6); lcd.write(7); } 
+      else { lcd.write(7); lcd.write(6); }
+      
+      lcd.setCursor(1, 1);
+      if (toggleFrame == true) { lcd.write(7); lcd.write(6); } 
+      else { lcd.write(6); lcd.write(7); }
+    }
+    
+    if (spin2 == true) {
+      lcd.setCursor(7, 0);
+      if (toggleFrame == true) { lcd.write(6); lcd.write(7); } 
+      else { lcd.write(7); lcd.write(6); }
+      
+      lcd.setCursor(7, 1);
+      if (toggleFrame == true) { lcd.write(7); lcd.write(6); } 
+      else { lcd.write(6); lcd.write(7); }
+    }
+    
+    if (spin3 == true) {
+      lcd.setCursor(13, 0);
+      if (toggleFrame == true) { lcd.write(6); lcd.write(7); } 
+      else { lcd.write(7); lcd.write(6); }
+      
+      lcd.setCursor(13, 1);
+      if (toggleFrame == true) { lcd.write(7); lcd.write(6); } 
+      else { lcd.write(6); lcd.write(7); }
+    }
+    
+    // tick sound
+    tone(buzzer, 1300, 15);
+    
+    // --- CHECK BUTTON 1 ---
+    if (digitalRead(reel1Btn) == LOW && spin1 == true) {
+      spin1 = false;
+      lcd.setCursor(1, 0); lcd.print("  "); lcd.setCursor(1, 1); lcd.print("  ");
+      
+      if(reel1 == 0) { lcd.createChar(0, skullTop); lcd.createChar(1, skullBot); }
+      else if(reel1 == 1) { lcd.createChar(0, cherryTop); lcd.createChar(1, cherryBot); }
+      else if(reel1 == 2) { lcd.createChar(0, triple7Top); lcd.createChar(1, triple7Bot); }
+      else if(reel1 == 3) { lcd.createChar(0, bellTop); lcd.createChar(1, bellBot); }
+      else if(reel1 == 4) { lcd.createChar(0, starTop); lcd.createChar(1, starBot); }
+      else if(reel1 == 5) { lcd.createChar(0, diamondTop); lcd.createChar(1, diamondBot); }
+      
+      lcd.setCursor(1, 0); lcd.write(0); lcd.write(0);
+      lcd.setCursor(1, 1); lcd.write(1); lcd.write(1);
+      delay(250);
+    }
+    
+    // --- CHECK BUTTON 2 ---
+    if (digitalRead(reel2Btn) == LOW && spin2 == true) {
+      spin2 = false;
+      lcd.setCursor(7, 0); lcd.print("  "); lcd.setCursor(7, 1); lcd.print("  ");
+      
+      if(reel2 == 0) { lcd.createChar(2, skullTop); lcd.createChar(3, skullBot); }
+      else if(reel2 == 1) { lcd.createChar(2, cherryTop); lcd.createChar(3, cherryBot); }
+      else if(reel2 == 2) { lcd.createChar(2, triple7Top); lcd.createChar(3, triple7Bot); }
+      else if(reel2 == 3) { lcd.createChar(2, bellTop); lcd.createChar(3, bellBot); }
+      else if(reel2 == 4) { lcd.createChar(2, starTop); lcd.createChar(3, starBot); }
+      else if(reel2 == 5) { lcd.createChar(2, diamondTop); lcd.createChar(3, diamondBot); }
+      
+      lcd.setCursor(7, 0); lcd.write(2); lcd.write(2);
+      lcd.setCursor(7, 1); lcd.write(3); lcd.write(3);
+      delay(250);
+    }
+    
+    // --- CHECK BUTTON 3 ---
+    if (digitalRead(reel3Btn) == LOW && spin3 == true) {
+      spin3 = false;
+      lcd.setCursor(13, 0); lcd.print("  "); lcd.setCursor(13, 1); lcd.print("  ");
+      
+      if(reel3 == 0) { lcd.createChar(4, skullTop); lcd.createChar(5, skullBot); }
+      else if(reel3 == 1) { lcd.createChar(4, cherryTop); lcd.createChar(5, cherryBot); }
+      else if(reel3 == 2) { lcd.createChar(4, triple7Top); lcd.createChar(5, triple7Bot); }
+      else if(reel3 == 3) { lcd.createChar(4, bellTop); lcd.createChar(5, bellBot); }
+      else if(reel3 == 4) { lcd.createChar(4, starTop); lcd.createChar(5, starBot); }
+      else if(reel3 == 5) { lcd.createChar(4, diamondTop); lcd.createChar(5, diamondBot); }
+      
+      lcd.setCursor(13, 0); lcd.write(4); lcd.write(4);
+      lcd.setCursor(13, 1); lcd.write(5); lcd.write(5);
+      delay(250);
+    }
+    delay(40); 
+  }
+  checkResult();
+}
+
+void checkResult() {
+  delay(1500); 
+  lcd.clear(); 
+  
+  // if all 3 match
+  if (reel1 == reel2 && reel2 == reel3) {
+    lcd.setCursor(2, 0); 
+    lcd.print("JACKPOT!!!");
+    digitalWrite(greenLED, HIGH);
+    
+    for(int i = 0; i < 3; i++) {
+      tone(buzzer, 523, 150); delay(150);
+      tone(buzzer, 659, 150); delay(150);
+      tone(buzzer, 784, 300);
+      lcd.noBacklight(); delay(150);
+      lcd.backlight(); delay(150);
+    }
+  } 
+  // if only 2 match
+  else if (reel1 == reel2 || reel1 == reel3 || reel2 == reel3) {
+    lcd.setCursor(2, 0); 
+    lcd.print("TWO MATCHES");
+    digitalWrite(yellowLED, HIGH);
+    tone(buzzer, 600, 500);
+  } 
+  // if none match
+  else {
+    lcd.setCursor(3, 0); lcd.print("YOU LOSE!");
+    lcd.setCursor(3, 1); lcd.print("TRY AGAIN");
+    digitalWrite(redLED, HIGH);
+    tone(buzzer, 150, 600);
+  }
+  
+  delay(4000); 
+  showSplash();
+}
