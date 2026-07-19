@@ -1,0 +1,152 @@
+#include <Servo.h>
+
+// --- PIN DEFINITIONS ---
+const int JOY_X = A1;       
+const int JOY_Y = A0;       
+const int JOY_BTN = 2;      
+const int SERVO_L_PIN = 9;  
+const int SERVO_R_PIN = 10; 
+
+// --- RESTRICTED SERVO SPEED VALUES (Exactly 15 degrees off 90) ---
+const int L_STOP  = 90;  const int R_STOP  = 90;
+const int L_FOR   = 105; const int R_FOR   = 75;   // Gentle Forward (Mirrored)
+const int L_BACK  = 75;  const int R_BACK  = 105;  // Gentle Backward (Mirrored)
+const int L_LEFT  = 75;  const int R_LEFT  = 75;   // Gentle Spin Left (Both back/same direction)
+const int L_RIGHT = 105; const int R_RIGHT = 105;  // Gentle Spin Right (Both forward/same direction)
+
+// --- MEMORY STORAGE ---
+const int MAX_STEPS = 300;  
+char recordedMoves[MAX_STEPS];
+unsigned long recordedDurations[MAX_STEPS];
+
+int stepCount = 0;
+unsigned long actionStartTime = 0;
+char currentAction = 'S'; 
+bool hasStartedRecording = false; 
+
+// --- STATE MACHINE ---
+enum State { RECORDING, WAITING_FOR_PLAYBACK, PLAYBACK };
+State robotState = RECORDING;
+
+Servo servoLeft;
+Servo servoRight;
+
+void setup() {
+  pinMode(JOY_BTN, INPUT_PULLUP); 
+  moveRobot('S'); 
+}
+
+void loop() {
+  bool btnPressed = (digitalRead(JOY_BTN) == LOW);
+  int xVal = analogRead(JOY_X);
+  int yVal = analogRead(JOY_Y);
+
+  // --- DIRECTION CHECKS MATCHING YOUR JOYSTICK ---
+  bool joyUp    = (yVal < 300);  // Forward (towards pins)
+  bool joyDown  = (yVal > 700);  // Backward
+  bool joyLeft  = (xVal > 700);  // Swapped to fix left direction mix-up
+  bool joyRight = (xVal < 300);  // Swapped to fix right direction mix-up
+
+  switch (robotState) {
+    
+    case RECORDING:
+      if (btnPressed) {
+        if (hasStartedRecording) {
+          saveCurrentAction('S'); 
+        }
+        robotState = WAITING_FOR_PLAYBACK;
+        moveRobot('S');
+        delay(500); // Debounce
+        break;
+      }
+
+      // Determine movement action based on joystick position
+      char joyAction;
+      if (joyUp)         joyAction = 'F'; // Forward
+      else if (joyDown)  joyAction = 'B'; // Backward
+      else if (joyLeft)  joyAction = 'L'; // Left Spin
+      else if (joyRight) joyAction = 'R'; // Right Spin
+      else               joyAction = 'S'; // Stop
+
+      // Start recording timer only when you make your first move
+      if (!hasStartedRecording) {
+        if (joyAction != 'S') {
+          hasStartedRecording = true;
+          actionStartTime = millis();
+          currentAction = joyAction;
+        }
+      } else {
+        if (joyAction != currentAction) {
+          saveCurrentAction(joyAction);
+        }
+      }
+      
+      moveRobot(currentAction);
+      break;
+
+
+    case WAITING_FOR_PLAYBACK:
+      if (btnPressed) {
+        stepCount = 0; 
+        hasStartedRecording = false; 
+        robotState = RECORDING;
+        currentAction = 'S';
+        delay(500);
+        break;
+      }
+
+      if (joyUp) {
+        moveRobot('S');
+        delay(3000); // 3-second delay before playback starts
+        robotState = PLAYBACK;
+      }
+      break;
+
+
+    case PLAYBACK:
+      for (int i = 0; i < stepCount; i++) {
+        moveRobot(recordedMoves[i]);
+        delay(recordedDurations[i]);
+      }
+      moveRobot('S');
+      robotState = WAITING_FOR_PLAYBACK; 
+      break;
+  }
+}
+
+// --- HELPER FUNCTIONS ---
+
+void saveCurrentAction(char nextAction) {
+  if (stepCount < MAX_STEPS) {
+    recordedMoves[stepCount] = currentAction;
+    recordedDurations[stepCount] = millis() - actionStartTime;
+    stepCount++;
+  }
+  currentAction = nextAction;
+  actionStartTime = millis();
+}
+
+void moveRobot(char action) {
+  if (action == 'S') {
+    if (servoLeft.attached())  servoLeft.detach();
+    if (servoRight.attached()) servoRight.detach();
+  } 
+  else {
+    if (!servoLeft.attached())  servoLeft.attach(SERVO_L_PIN);
+    if (!servoRight.attached()) servoRight.attach(SERVO_R_PIN);
+
+    if (action == 'F') {
+      servoLeft.write(L_FOR);
+      servoRight.write(R_FOR);
+    } else if (action == 'B') {
+      servoLeft.write(L_BACK);
+      servoRight.write(R_BACK);
+    } else if (action == 'L') {
+      servoLeft.write(L_LEFT);
+      servoRight.write(R_LEFT);
+    } else if (action == 'R') {
+      servoLeft.write(L_RIGHT);
+      servoRight.write(R_RIGHT);
+    }
+  }
+}
