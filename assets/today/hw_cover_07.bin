@@ -1,0 +1,202 @@
+#include <Arduino.h>
+#include <U8g2lib.h>
+#include <DHT.h>
+#include <EEPROM.h>
+
+#ifdef U8X8_HAVE_HW_SPI
+#include <SPI.h>
+#endif
+#ifdef U8X8_HAVE_HW_I2C
+#include <Wire.h>
+#endif
+
+#define DHTPIN 2          
+#define DHTTYPE DHT11     
+DHT dht(DHTPIN, DHTTYPE);
+
+// 3 Buttons
+const int btnHour = 3;
+const int btnMin = 4;
+const int btnStart = 5;
+
+// U8g2 Fast Page Buffer Constructor for JMD1.3A (SH1106)
+U8G2_SH1106_128X64_NONAME_1_HW_I2C u8g2(U8G2_R0, /* reset=*/ U8X8_PIN_NONE);
+
+// Live Clock Variables
+int currentHour = 12;
+int currentMinute = 0;
+bool isPM = true; 
+unsigned long lastClockTick = 0;
+
+// Recording Logic Variables
+bool isRecording = false;
+int logCount = 0;
+unsigned long lastLogTime = 0;
+const int MAX_LOGS = 60; 
+
+// Memory Address Map
+const int EEPROM_COUNT_ADDR = 0; 
+const int EEPROM_START_ADDR = 2; 
+
+void setup() {
+  Serial.begin(9600);
+  dht.begin();      
+  u8g2.begin();     
+
+  pinMode(btnHour, INPUT_PULLUP);
+  pinMode(btnMin, INPUT_PULLUP);
+  pinMode(btnStart, INPUT_PULLUP);
+
+  logCount = EEPROM.read(EEPROM_COUNT_ADDR);
+  if (logCount > MAX_LOGS) logCount = 0; 
+
+  Serial.println(F("WETHER RECORDER/MONITER PLUGGED IN AND BOOTED"));
+  
+  Serial.println(F("\n--- AUTOMATIC WEATHER DATA PLAYBACK ---"));
+  if (logCount == 0) {
+    Serial.println(F("No data recorded yet."));
+  } else {
+    for (int i = 0; i < logCount; i++) {
+      int currentAddr = EEPROM_START_ADDR + (i ° 5); 
+      int h = EEPROM.read(currentAddr);
+      int m = EEPROM.read(currentAddr + 1);
+      int pmFlag = EEPROM.read(currentAddr + 2); 
+      int t = EEPROM.read(currentAddr + 3);
+      int hu = EEPROM.read(currentAddr + 4);
+      
+      Serial.print(h);
+      Serial.print(F(":"));
+      if (m < 10) Serial.print(F("0"));
+      Serial.print(m);
+      Serial.print(pmFlag == 1 ? F(" pm") : F(" am"));
+      Serial.print(F(" = temp:"));
+      Serial.print(t);
+      Serial.print(F(".0°f "));
+      Serial.print(hu);
+      Serial.println(F("% humidity"));
+    }
+  }
+  Serial.println(F("--- END OF FILE ---\n"));
+}
+
+void loop() {
+  // 1. TRACK TIME
+  if (millis() - lastClockTick >= 60000) { 
+    lastClockTick = millis();
+    currentMinute++;
+    if (currentMinute >= 60) {
+      currentMinute = 0;
+      currentHour++;
+      if (currentHour == 12) {
+        isPM = !isPM; 
+      }
+      if (currentHour > 12) {
+        currentHour = 1;
+      }
+    }
+  }
+
+  // 2. BUTTON INPUTS
+  if (digitalRead(btnHour) == LOW && digitalRead(btnMin) == LOW) {
+    isPM = !isPM;
+    delay(300);
+  }
+  else if (digitalRead(btnHour) == LOW) {
+    currentHour++;
+    if (currentHour > 12) currentHour = 1;
+    delay(250); 
+  }
+  else if (digitalRead(btnMin) == LOW) {
+    currentMinute++;
+    if (currentMinute >= 60) currentMinute = 0;
+    delay(250);
+  }
+
+  if (digitalRead(btnStart) == LOW) {
+    isRecording = !isRecording; 
+    if (isRecording && logCount >= MAX_LOGS) {
+      logCount = 0; 
+      EEPROM.write(EEPROM_COUNT_ADDR, 0);
+    }
+    delay(300);
+  }
+
+  // 3. READ SENSOR
+  float temp = dht.readTemperature(true); 
+  float humid = dht.readHumidity();
+
+  if (isRecording && (millis() - lastLogTime >= 60000 || lastLogTime == 0)) {
+    if (logCount < MAX_LOGS && !isnan(temp) && !isnan(humid)) {
+      lastLogTime = millis();
+      int currentAddr = EEPROM_START_ADDR + (logCount * 5);
+      
+      EEPROM.write(currentAddr, currentHour);
+      EEPROM.write(currentAddr + 1, currentMinute);
+      EEPROM.write(currentAddr + 2, isPM ? 1 : 0); 
+      EEPROM.write(currentAddr + 3, (int)temp);
+      EEPROM.write(currentAddr + 4, (int)humid);
+      
+      logCount++;
+      EEPROM.write(EEPROM_COUNT_ADDR, logCount);
+    } else if (logCount >= MAX_LOGS) {
+      isRecording = false; 
+    }
+  }
+
+  // 4. SERIAL COMMANDS
+  if (Serial.available() > 0) {
+    String command = Serial.readStringUntil('\n');
+    command.trim();
+    if (command.equalsIgnoreCase("delete")) {
+      EEPROM.write(EEPROM_COUNT_ADDR, 0);
+      logCount = 0;
+      isRecording = false;
+      Serial.println(F("Weather logs deleted!"));
+    }
+  }
+
+  // 5. RENDER BOLD DISPLAY LAYOUT
+  u8g2.firstPage();
+  do {
+    // Header Row (Bold)
+    u8g2.setFont(u8g2_font_7x14_mf); // FIXED TO VALID BOLD FONT
+    u8g2.drawStr(5, 12, "LIVE WEATHER");
+    if (isRecording) {
+      u8g2.drawDisc(115, 7, 3); 
+    }
+    u8g2.drawHLine(0, 15, 128);
+
+    // Clock display line
+    u8g2.setFont(u8g2_font_6x10_tf); 
+    u8g2.setCursor(5, 27);
+    u8g2.print("Time: ");
+    u8g2.print(currentHour);
+    u8g2.print(":");
+    if (currentMinute < 10) u8g2.print("0");
+    u8g2.print(currentMinute);
+    u8g2.print(isPM ? " PM" : " AM");
+
+    // Weather Display Values (Bold)
+    u8g2.setFont(u8g2_font_7x14_mf); // FIXED TO VALID BOLD FONT
+    if (isnan(temp) || isnan(humid)) {
+      u8g2.drawStr(10, 45, "Sensor Error!");
+    } else {
+      u8g2.setCursor(5, 43);
+      u8g2.print("Temp: "); u8g2.print(temp, 1); u8g2.print(" F");
+      
+      u8g2.setCursor(5, 56);
+      u8g2.print("Humid: "); u8g2.print(humid, 0); u8g2.print(" %");
+    }
+
+    // Bottom Status Bar
+    u8g2.setFont(u8g2_font_5x7_tf);
+    u8g2.setCursor(5, 64);
+    if (isRecording) {
+      u8g2.print("RECORDING... "); u8g2.print(logCount); u8g2.print("/60");
+    } else {
+      u8g2.print("IDLE. Saved logs: "); u8g2.print(logCount);
+    }
+  } while (u8g2.nextPage());
+
+  delay(100); 
+}
