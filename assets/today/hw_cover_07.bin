@@ -1,0 +1,807 @@
+#include <WiFi.h>
+#include <WebServer.h>
+#include <ESP32Servo.h>
+
+// ============================================================
+// WIFI
+// ============================================================
+
+const char* ssid = "WIFI NAME";
+const char* password = "WIFI PASSWORD";
+
+// ============================================================
+// PIN CONFIGURATION
+// ============================================================
+
+// ------------------------------------------------------------
+// LEFT MOTOR
+// ------------------------------------------------------------
+
+const int LEFT_IN1 = 4;
+const int LEFT_IN2 = 5;
+const int LEFT_PWM = 21;
+
+// ------------------------------------------------------------
+// RIGHT MOTOR
+// ------------------------------------------------------------
+
+const int RIGHT_IN1 = 6;
+const int RIGHT_IN2 = 7;
+const int RIGHT_PWM = 8;
+
+// ------------------------------------------------------------
+// PUMP
+// ------------------------------------------------------------
+
+const int PUMP_IN1 = 41;
+const int PUMP_IN2 = 42;
+const int PUMP_PWM = 2;
+
+// ------------------------------------------------------------
+// SERVO
+// ------------------------------------------------------------
+
+const int SERVO_PIN = 1;
+
+// ============================================================
+// SERVER
+// ============================================================
+
+WebServer server(80);
+
+// ============================================================
+// VARIABLES
+// ============================================================
+
+int motor_speed = 50;
+
+int pumpPowerPercent = 50;
+
+bool pumpFiring = false;
+
+Servo gunServo;
+
+// ============================================================
+// MOTOR CONTROL
+// ============================================================
+
+void stopMotors() {
+
+  digitalWrite(LEFT_IN1, LOW);
+  digitalWrite(LEFT_IN2, LOW);
+
+  digitalWrite(RIGHT_IN1, LOW);
+  digitalWrite(RIGHT_IN2, LOW);
+
+  ledcWrite(LEFT_PWM, 0);
+  ledcWrite(RIGHT_PWM, 0);
+}
+
+
+// ------------------------------------------------------------
+// Forward
+// ------------------------------------------------------------
+
+void moveForward() {
+
+  // Left motor forward
+  digitalWrite(LEFT_IN1, HIGH);
+  digitalWrite(LEFT_IN2, LOW);
+
+  // Right motor forward
+  digitalWrite(RIGHT_IN1, LOW);
+  digitalWrite(RIGHT_IN2, HIGH);
+
+  ledcWrite(LEFT_PWM, motor_speed);
+  ledcWrite(RIGHT_PWM, motor_speed);
+}
+
+
+// ------------------------------------------------------------
+// Backward
+// ------------------------------------------------------------
+
+void moveBackward() {
+
+  // Left motor backward
+  digitalWrite(LEFT_IN1, LOW);
+  digitalWrite(LEFT_IN2, HIGH);
+
+  // Right motor backward
+  digitalWrite(RIGHT_IN1, HIGH);
+  digitalWrite(RIGHT_IN2, LOW);
+
+  ledcWrite(LEFT_PWM, motor_speed);
+  ledcWrite(RIGHT_PWM, motor_speed);
+}
+
+
+// ------------------------------------------------------------
+// Turn left
+// ------------------------------------------------------------
+
+void turnLeft() {
+
+  // Left motor backward
+  digitalWrite(LEFT_IN1, LOW);
+  digitalWrite(LEFT_IN2, HIGH);
+
+  // Right motor forward
+  digitalWrite(RIGHT_IN1, LOW);
+  digitalWrite(RIGHT_IN2, HIGH);
+
+  ledcWrite(LEFT_PWM, motor_speed);
+  ledcWrite(RIGHT_PWM, motor_speed);
+}
+
+
+// ------------------------------------------------------------
+// Turn right
+// ------------------------------------------------------------
+
+void turnRight() {
+
+  // Left motor forward
+  digitalWrite(LEFT_IN1, HIGH);
+  digitalWrite(LEFT_IN2, LOW);
+
+  // Right motor backward
+  digitalWrite(RIGHT_IN1, HIGH);
+  digitalWrite(RIGHT_IN2, LOW);
+
+  ledcWrite(LEFT_PWM, motor_speed);
+  ledcWrite(RIGHT_PWM, motor_speed);
+}
+
+
+// ------------------------------------------------------------
+// Motor speed
+// ------------------------------------------------------------
+
+void setMotorSpeed(int percent) {
+
+  percent = constrain(percent, 0, 100);
+
+  motor_speed = map(
+    percent,
+    0,
+    100,
+    0,
+    255
+  );
+
+  ledcWrite(LEFT_PWM, motor_speed);
+  ledcWrite(RIGHT_PWM, motor_speed);
+}
+
+// ============================================================
+// PUMP CONTROL
+// ============================================================
+
+void setPumpPower(int percent) {
+
+  pumpPowerPercent = constrain(
+    percent,
+    0,
+    100
+  );
+
+  if (pumpFiring) {
+
+    int duty = map(
+      pumpPowerPercent,
+      0,
+      100,
+      0,
+      255
+    );
+
+    ledcWrite(PUMP_PWM, duty);
+  }
+}
+
+
+// ------------------------------------------------------------
+// Start / stop pump
+// ------------------------------------------------------------
+
+void fire(bool on) {
+
+  if (on) {
+
+    digitalWrite(PUMP_IN1, HIGH);
+    digitalWrite(PUMP_IN2, LOW);
+
+    pumpFiring = true;
+
+    int duty = map(
+      pumpPowerPercent,
+      0,
+      100,
+      0,
+      255
+    );
+
+    ledcWrite(PUMP_PWM, duty);
+
+  } else {
+
+    pumpOff();
+  }
+}
+
+
+// ------------------------------------------------------------
+// Pump off
+// ------------------------------------------------------------
+
+void pumpOff() {
+
+  pumpFiring = false;
+
+  ledcWrite(PUMP_PWM, 0);
+
+  digitalWrite(PUMP_IN1, LOW);
+  digitalWrite(PUMP_IN2, LOW);
+}
+
+// ============================================================
+// COMMAND PROCESSING
+// ============================================================
+
+void handleCommand(String cmd) {
+
+  cmd.trim();
+
+  Serial.print("Command: ");
+  Serial.println(cmd);
+
+  // ----------------------------------------------------------
+  // MOVEMENT
+  // ----------------------------------------------------------
+
+  if (cmd == "F") {
+
+    moveForward();
+
+  }
+
+  else if (cmd == "B") {
+
+    moveBackward();
+
+  }
+
+  else if (cmd == "L") {
+
+    turnLeft();
+
+  }
+
+  else if (cmd == "R") {
+
+    turnRight();
+
+  }
+
+  else if (cmd == "STOP") {
+
+    stopMotors();
+  }
+
+  // ----------------------------------------------------------
+  // SERVO
+  // ----------------------------------------------------------
+
+  else if (cmd.startsWith("SERVO:")) {
+
+    int angle = cmd.substring(6).toInt();
+
+    angle = constrain(
+      angle,
+      0,
+      180
+    );
+
+    gunServo.write(angle);
+
+    Serial.print("Servo: ");
+    Serial.println(angle);
+  }
+
+  // ----------------------------------------------------------
+  // MOTOR SPEED
+  // ----------------------------------------------------------
+
+  else if (cmd.startsWith("SPEED:")) {
+
+    int percent = cmd.substring(6).toInt();
+
+    setMotorSpeed(percent);
+
+    Serial.print("Motor speed: ");
+    Serial.println(percent);
+  }
+
+  // ----------------------------------------------------------
+  // PUMP
+  // ----------------------------------------------------------
+
+  else if (cmd == "FIRE:START") {
+
+    fire(true);
+
+  }
+
+  else if (cmd == "FIRE:STOP") {
+
+    fire(false);
+
+  }
+
+  else if (cmd.startsWith("PUMP:")) {
+
+    int percent = cmd.substring(5).toInt();
+
+    setPumpPower(percent);
+
+    Serial.print("Pump power: ");
+    Serial.println(percent);
+  }
+
+  else {
+
+    Serial.println("Unknown command");
+  }
+}
+
+// ============================================================
+// HTTP COMMAND ENDPOINT
+//
+// Examples:
+//
+// /cmd?c=F
+// /cmd?c=B
+// /cmd?c=L
+// /cmd?c=R
+// /cmd?c=STOP
+// /cmd?c=SPEED:75
+// /cmd?c=SERVO:90
+// /cmd?c=PUMP:50
+// /cmd?c=FIRE:START
+// /cmd?c=FIRE:STOP
+// ============================================================
+
+void handleCommandRequest() {
+
+  if (!server.hasArg("c")) {
+
+    server.send(
+      400,
+      "text/plain",
+      "Missing command"
+    );
+
+    return;
+  }
+
+  String command = server.arg("c");
+
+  handleCommand(command);
+
+  server.send(
+    200,
+    "text/plain",
+    "OK"
+  );
+}
+
+// ============================================================
+// STATUS
+// ============================================================
+
+void handleStatus() {
+
+  String response = "";
+
+  response += "{";
+
+  response += "\"motor_speed\":";
+  response += String(motor_speed);
+
+  response += ",";
+
+  response += "\"pump_power\":";
+  response += String(pumpPowerPercent);
+
+  response += ",";
+
+  response += "\"pump_firing\":";
+  response += pumpFiring ? "true" : "false";
+
+  response += ",";
+
+  response += "\"ip\":\"";
+  response += WiFi.localIP().toString();
+  response += "\"";
+
+  response += "}";
+
+  server.send(
+    200,
+    "application/json",
+    response
+  );
+}
+
+// ============================================================
+// WEB CONTROL PAGE
+// ============================================================
+
+void handleRoot() {
+
+  String html = R"rawliteral(
+
+<!DOCTYPE html>
+
+<html>
+
+<head>
+
+<meta name="viewport"
+      content="width=device-width, initial-scale=1">
+
+<title>ESP32-S3 Tank</title>
+
+<style>
+
+body {
+  font-family: Arial;
+  text-align: center;
+  background: #222;
+  color: white;
+}
+
+button {
+  width: 120px;
+  height: 70px;
+  margin: 8px;
+  font-size: 20px;
+}
+
+input {
+  width: 300px;
+}
+
+</style>
+
+</head>
+
+<body>
+
+<h1>ESP32-S3 Tank</h1>
+
+<h2>Movement</h2>
+
+<div>
+
+<button onclick="cmd('F')">
+Forward
+</button>
+
+</div>
+
+<div>
+
+<button onclick="cmd('L')">
+Left
+</button>
+
+<button onclick="cmd('STOP')">
+STOP
+</button>
+
+<button onclick="cmd('R')">
+Right
+</button>
+
+</div>
+
+<div>
+
+<button onclick="cmd('B')">
+Backward
+</button>
+
+</div>
+
+<h2>Motor Speed</h2>
+
+<input
+  type="range"
+  min="0"
+  max="100"
+  value="50"
+  oninput="speed(this.value)"
+>
+
+<p id="speedValue">50%</p>
+
+<h2>Servo</h2>
+
+<input
+  type="range"
+  min="0"
+  max="180"
+  value="90"
+  oninput="servo(this.value)"
+>
+
+<p id="servoValue">90°</p>
+
+<h2>Pump</h2>
+
+<input
+  type="range"
+  min="0"
+  max="100"
+  value="50"
+  oninput="pumpPower(this.value)"
+>
+
+<p id="pumpValue">50%</p>
+
+<button onclick="cmd('FIRE:START')">
+FIRE
+</button>
+
+<button onclick="cmd('FIRE:STOP')">
+PUMP OFF
+</button>
+
+<script>
+
+function cmd(command) {
+
+  fetch(
+    '/cmd?c=' +
+    encodeURIComponent(command)
+  );
+
+}
+
+function speed(value) {
+
+  document.getElementById(
+    'speedValue'
+  ).innerText = value + '%';
+
+  cmd('SPEED:' + value);
+
+}
+
+function servo(value) {
+
+  document.getElementById(
+    'servoValue'
+  ).innerText = value + '°';
+
+  cmd('SERVO:' + value);
+
+}
+
+function pumpPower(value) {
+
+  document.getElementById(
+    'pumpValue'
+  ).innerText = value + '%';
+
+  cmd('PUMP:' + value);
+
+}
+
+</script>
+
+</body>
+
+</html>
+
+)rawliteral";
+
+  server.send(
+    200,
+    "text/html",
+    html
+  );
+}
+
+// ============================================================
+// 404
+// ============================================================
+
+void handleNotFound() {
+
+  server.send(
+    404,
+    "text/plain",
+    "Not found"
+  );
+}
+
+// ============================================================
+// SETUP
+// ============================================================
+
+void setup() {
+
+  Serial.begin(115200);
+
+  delay(500);
+
+  Serial.println();
+  Serial.println("==============================");
+  Serial.println("ESP32-S3 TANK CONTROLLER");
+  Serial.println("==============================");
+
+  // ==========================================================
+  // SERVO
+  // ==========================================================
+
+  gunServo.setPeriodHertz(50);
+
+  gunServo.attach(
+    SERVO_PIN,
+    500,
+    2500
+  );
+
+  gunServo.write(90);
+
+  Serial.println("Servo initialized");
+
+
+  // ==========================================================
+  // MOTOR GPIO
+  // ==========================================================
+
+  pinMode(LEFT_IN1, OUTPUT);
+  pinMode(LEFT_IN2, OUTPUT);
+
+  pinMode(RIGHT_IN1, OUTPUT);
+  pinMode(RIGHT_IN2, OUTPUT);
+
+
+  // ==========================================================
+  // PUMP GPIO
+  // ==========================================================
+
+  pinMode(PUMP_IN1, OUTPUT);
+  pinMode(PUMP_IN2, OUTPUT);
+
+
+  // ==========================================================
+  // PWM
+  //
+  // Arduino ESP32 Core 3.x:
+  //
+  // ledcAttach(pin, frequency, resolution)
+  // ==========================================================
+
+  ledcAttach(
+    LEFT_PWM,
+    1000,
+    8
+  );
+
+  ledcAttach(
+    RIGHT_PWM,
+    1000,
+    8
+  );
+
+  ledcAttach(
+    PUMP_PWM,
+    1000,
+    8
+  );
+
+
+  // ==========================================================
+  // SAFE INITIAL STATE
+  // ==========================================================
+
+  stopMotors();
+
+  pumpOff();
+
+  setMotorSpeed(50);
+
+
+  // ==========================================================
+  // WIFI
+  // ==========================================================
+
+  WiFi.mode(WIFI_STA);
+
+  WiFi.begin(
+    ssid,
+    password
+  );
+
+  Serial.print("Connecting to WiFi");
+
+  while (
+    WiFi.status() != WL_CONNECTED
+  ) {
+
+    delay(500);
+
+    Serial.print(".");
+  }
+
+  Serial.println();
+
+  Serial.println("WiFi connected!");
+
+  Serial.print("IP address: ");
+
+  Serial.println(
+    WiFi.localIP()
+  );
+
+
+  // ==========================================================
+  // HTTP ROUTES
+  // ==========================================================
+
+  server.on(
+    "/",
+    HTTP_GET,
+    handleRoot
+  );
+
+  server.on(
+    "/cmd",
+    HTTP_GET,
+    handleCommandRequest
+  );
+
+  server.on(
+    "/status",
+    HTTP_GET,
+    handleStatus
+  );
+
+  server.onNotFound(
+    handleNotFound
+  );
+
+
+  // ==========================================================
+  // START SERVER
+  // ==========================================================
+
+  server.begin();
+
+  Serial.println(
+    "HTTP server started"
+  );
+
+  Serial.println("==============================");
+  Serial.println("TANK CONTROLLER READY");
+  Serial.println("==============================");
+
+  Serial.print("Open: http://");
+  Serial.print(WiFi.localIP());
+  Serial.println("/");
+}
+
+// ============================================================
+// LOOP
+// ============================================================
+
+void loop() {
+
+  server.handleClient();
+
+}
