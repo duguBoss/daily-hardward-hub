@@ -1,0 +1,123 @@
+// Ultrasonic Sensor
+#define TRIG A0
+#define ECHO 13
+
+// Soil Sensor
+#define SOIL_SENSOR A1
+
+// Motor 1
+#define M1A 8
+#define M1B 9
+
+// Motor 2
+#define M2A 6
+#define M2B 7
+
+long duration;
+float distance;
+
+int soilValue;
+
+void setup() {
+  Serial.begin(9600);
+
+  pinMode(TRIG, OUTPUT);
+  pinMode(ECHO, INPUT);
+
+  pinMode(SOIL_SENSOR, INPUT);
+
+  pinMode(M1A, OUTPUT);
+  pinMode(M1B, OUTPUT);
+  pinMode(M2A, OUTPUT);
+  pinMode(M2B, OUTPUT);
+
+  stopRobot();
+}
+
+void loop() {
+
+  // Read ultrasonic distance
+  distance = getDistance();
+
+  // Read soil sensor
+  soilValue = analogRead(SOIL_SENSOR);
+
+  // Display values in Serial Monitor
+  Serial.print("Distance: ");
+  Serial.print(distance);
+  Serial.print(" cm | Soil Value: ");
+  Serial.println(soilValue);
+
+  // If object is 25 cm or closer
+  if (distance <= 25 && distance > 0) {
+
+    stopRobot();
+    delay(4000);  // Stop for 4 seconds
+
+    turnRight();
+    delay(1000);  // Turn right for 1 second
+
+    stopRobot();
+    delay(200);
+  }
+  else {
+    // More than 25 cm
+    moveForward();
+  }
+
+  delay(50);
+}
+
+
+// -------- ULTRASONIC FUNCTION --------
+float getDistance() {
+
+  digitalWrite(TRIG, LOW);
+  delayMicroseconds(2);
+
+  digitalWrite(TRIG, HIGH);
+  delayMicroseconds(10);
+
+  digitalWrite(TRIG, LOW);
+
+  duration = pulseIn(ECHO, HIGH, 30000);
+
+  float dist = duration * 0.034 / 2;
+
+  return dist;
+}
+
+
+// -------- MOVE FORWARD --------
+void moveForward() {
+
+  digitalWrite(M1A, HIGH);
+  digitalWrite(M1B, LOW);
+
+  digitalWrite(M2A, HIGH);
+  digitalWrite(M2B, LOW);
+}
+
+
+// -------- STOP --------
+void stopRobot() {
+
+  digitalWrite(M1A, LOW);
+  digitalWrite(M1B, LOW);
+
+  digitalWrite(M2A, LOW);
+  digitalWrite(M2B, LOW);
+}
+
+
+// -------- TURN RIGHT --------
+void turnRight() {
+
+  // Left motor forward
+  digitalWrite(M1A, HIGH);
+  digitalWrite(M1B, LOW);
+
+  // Right motor backward
+  digitalWrite(M2A, LOW);
+  digitalWrite(M2B, HIGH);
+}
