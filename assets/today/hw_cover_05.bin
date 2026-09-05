@@ -1,0 +1,49 @@
+const int POT_PIN = A1;
+
+const int MOTOR_A = 8;
+const int MOTOR_B = 9;
+
+void setup() {
+  pinMode(MOTOR_A, OUTPUT);
+  pinMode(MOTOR_B, OUTPUT);
+
+  // Motor stopped
+  digitalWrite(MOTOR_A, LOW);
+  digitalWrite(MOTOR_B, LOW);
+}
+
+void loop() {
+
+  int potValue = analogRead(POT_PIN);
+
+  // CENTER = STOP
+  if (potValue >= 480 && potValue <= 543) {
+
+    digitalWrite(MOTOR_A, LOW);
+    digitalWrite(MOTOR_B, LOW);
+  }
+
+  // LEFT SIDE
+  else if (potValue < 480) {
+
+    int motorSpeed = map(potValue, 479, 0, 0, 255);
+    motorSpeed = constrain(motorSpeed, 0, 255);
+
+    // LEFT direction
+    analogWrite(MOTOR_A, motorSpeed);
+    digitalWrite(MOTOR_B, LOW);
+  }
+
+  // RIGHT SIDE
+  else {
+
+    int motorSpeed = map(potValue, 544, 1023, 0, 255);
+    motorSpeed = constrain(motorSpeed, 0, 255);
+
+    // RIGHT direction
+    digitalWrite(MOTOR_A, LOW);
+    analogWrite(MOTOR_B, motorSpeed);
+  }
+
+  delay(10);
+}
